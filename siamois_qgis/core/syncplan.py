@@ -15,7 +15,6 @@ from siamois_sdk import AuthenticationError, ConflictError, SiamoisClient, Siamo
 from siamois_sdk.flatten import (
     ColumnSpec, Issue, Vocabularies, cells_to_create, cells_to_patch, find_by_binding, resolve_label, row_to_cells,
 )
-from .geo import as_multipolygon
 from .loader import (
     BINDING_RU, BINDING_TYPE, FID_FULL, FID_STATUS, IMMUTABLE_BINDINGS, KIND_FIND, KIND_PROJECT, KIND_RU, VOCAB_RU,
     entity_answers,
@@ -55,10 +54,11 @@ class PushResult:
     conflict: Optional[ConflictError] = None
 
 
-def surface_only(kind: str, geojson):
-    """Projet et UE : le serveur exige un MultiPolygon (un Polygon est enveloppé, ligne/point refusés)."""
-    if kind in (KIND_PROJECT, KIND_RU):
-        return as_multipolygon(geojson)
+def check_geometry(kind: str, geojson):
+    """Le serveur accepte tout type de géométrie pour une UE et un mobilier ; l'emprise d'un projet est une surface."""
+    t = (geojson or {}).get("type")
+    if kind == KIND_PROJECT and t and t not in ("Polygon", "MultiPolygon"):
+        return None, f"l'emprise d'un projet doit être une surface (polygone), pas : {t}"
     return geojson, None
 
 
@@ -97,7 +97,7 @@ def collect_changes(layer: str, kind: str, specs: List[ColumnSpec], base: Dict[s
         ch.answers = answers
         if (cur.get("wkt") or None) != (b.get("geom_wkt") or None):
             if geom_editable:
-                geom, err = surface_only(kind, cur.get("geojson"))
+                geom, err = check_geometry(kind, cur.get("geojson"))
                 if err:
                     ch.issues.append(Issue("géométrie", err))
                 else:
@@ -120,7 +120,8 @@ def push(client: SiamoisClient, change: RowChange, *, force_revision: Optional[i
                 expected_revision=expected)
             return PushResult(change, "ok", new_revision=res.sync_revision)
         if change.kind == KIND_FIND:
-            client.update_find(change.id, answers=change.answers or None, validated=change.validated)
+            client.update_find(change.id, answers=change.answers or None,
+                               geom=change.geom if change.geom_changed else ..., validated=change.validated)
             return PushResult(change, "ok")
         if change.kind == KIND_PROJECT:
             payload: Dict[str, Any] = {}
@@ -236,11 +237,11 @@ def collect_creations(layer: str, kind: str, specs: List[ColumnSpec], new_rows: 
         # géométrie
         if r.get("geojson"):
             if geom_editable:
-                cr.geom, err = surface_only(kind, r["geojson"])
+                cr.geom, err = check_geometry(kind, r["geojson"])
                 if err:
                     cr.issues.append(Issue("géométrie", err))
             else:
-                cr.issues.append(Issue("géométrie", "la géométrie d'un mobilier ne peut pas être envoyée : ignorée", False))
+                cr.issues.append(Issue("géométrie", "la géométrie de cette couche est en lecture seule : ignorée", False))
         ident = next((str(v) for k, v in cells.items() if k not in (type_spec.name if type_spec else "",)), None)
         cr.label = f"nouvelle ligne #{r['fid']}" + (f" ({ident})" if ident else "")
         out.append(cr)
@@ -252,7 +253,7 @@ def push_create(client: SiamoisClient, cr: RowCreation, project_id: str) -> Crea
         if cr.kind == KIND_RU:
             e = client.create_recording_unit(project_id, cr.type_id, answers=cr.answers or None, geom=cr.geom)
         elif cr.kind == KIND_FIND:
-            e = client.create_find(cr.parent_id, cr.type_id, answers=cr.answers or None)
+            e = client.create_find(cr.parent_id, cr.type_id, answers=cr.answers or None, geom=cr.geom)
         else:
             return CreateResult(cr, "error", f"création non gérée pour : {cr.kind}")
         return CreateResult(cr, "ok", new_revision=getattr(e, "sync_revision", None), entity=e)

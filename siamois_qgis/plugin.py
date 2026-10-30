@@ -221,6 +221,9 @@ class SiamoisPlugin:
         tables = ", ".join(f"{ld.name} ({len(ld.rows)})" for ld in bundle.layers if ld.rows)
         self._msg(f"Projet « {bundle.project_name} » chargé : {bundle.count(loader.KIND_RU)} unité(s) d'enregistrement, "
                   f"{bundle.count(loader.KIND_FIND)} mobilier(s). Tables : {tables}. Fichier : {gpkg}", Qgis.Success, 10)
+        if bundle.skipped_find_geoms:
+            self._msg(f"{bundle.skipped_find_geoms} mobilier(s) ont une géométrie qui n'est pas un point : elle reste "
+                      "sur le serveur et n'est pas affichée (la table uo_point est ponctuelle).", Qgis.Warning, 12)
 
     @staticmethod
     def _wkt(geojson):
@@ -309,9 +312,6 @@ class SiamoisPlugin:
         if layer is None or not layer.customProperty(ql.PROP_DB):
             self._msg("Sélectionnez une couche SIAMOIS puis un élément.", Qgis.Warning)
             return
-        if layer.customProperty(ql.PROP_KIND) == loader.KIND_FIND:
-            self._msg("La géométrie d'un mobilier ne peut pas être envoyée à SIAMOIS (limite de l'API).", Qgis.Warning)
-            return
         feats = layer.selectedFeatures()
         if len(feats) != 1:
             self._msg("Sélectionnez un seul élément de la couche.", Qgis.Warning)
@@ -382,11 +382,11 @@ class SiamoisPlugin:
             vocabs[loader.VOCAB_STATUS] = loader.status_vocabulary()
             c.vocabs = vocabs
             c.changes = syncplan.collect_changes(name, c.kind, c.specs, store.base(name), current, vocabs,
-                                                 geom_editable=c.kind != loader.KIND_FIND)
+                                                 geom_editable=True)
             if c.kind in (loader.KIND_RU, loader.KIND_FIND):
                 c.creations = syncplan.collect_creations(
                     name, c.kind, c.specs, new, vocabs, info["type_allowed"], info["default_allowed"],
-                    geom_editable=c.kind != loader.KIND_FIND)
+                    geom_editable=True)
             ctxs.append(c)
         return ctxs, new_rows
 

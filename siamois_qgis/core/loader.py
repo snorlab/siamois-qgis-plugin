@@ -79,6 +79,7 @@ class ProjectBundle:
     base_url: str = ""
     spatial: sm.SpatialConfig = field(default_factory=sm.SpatialConfig)
     author: str = sm.AUTHOR_FALLBACK
+    skipped_find_geoms: int = 0  # mobiliers non ponctuels : géométrie non affichée (uo_point est ponctuelle)
 
     def layer(self, table: str) -> LayerData:
         return next(l for l in self.layers if l.name == table)
@@ -225,12 +226,17 @@ def load_project(client: SiamoisClient, org_id: Any, project_id: Any, progress: 
     find_type = type_column(find_specs)
     ru_layers = split_by_table(KIND_RU, ru_specs, ru_rows, ru_type, spatial,
                                type_allowed=ru_allowed, default_allowed=default_allowed)
-    # L'API ne permet pas de modifier la géométrie d'un mobilier : lecture seule
-    find_layers = split_by_table(KIND_FIND, find_specs, find_rows, find_type, spatial, geom_editable=False,
+    # `uo_point` est ponctuelle : un mobilier non ponctuel garde sa géométrie côté serveur, sans l'afficher ici
+    skipped_geoms = 0
+    for r in find_rows:
+        if r.geom and sm.geometry_family(r.geom) != sm.POINT:
+            r.geom, skipped_geoms = None, skipped_geoms + 1
+    find_layers = split_by_table(KIND_FIND, find_specs, find_rows, find_type, spatial,
                                  type_allowed={t: a | {FID_FULL, FID_STATUS, FID_TYPE} for t, a in find_allowed.items()},
                                  default_allowed=default_find)
     layers += ru_layers + find_layers
-    return ProjectBundle(str(org_id), pid, project.name, layers, vocab_concepts, client.base_url, spatial, author)
+    return ProjectBundle(str(org_id), pid, project.name, layers, vocab_concepts, client.base_url, spatial, author,
+                         skipped_find_geoms=skipped_geoms)
 
 
 def layer_title(kind: str, table: str) -> str:

@@ -24,6 +24,10 @@ table SIAMOIS** (UE : polygone, réglable ; mobilier : point ; projet : polygone
 Les colonnes `siamois_id` / `siamois_revision` portent la synchronisation ; `numXXX` et `typXXX` recopient l'identifiant
 complet et le type. Détails et demandes d'évolution serveur : [`docs/DEMANDE_EVOLUTION_SIAMOIS.md`](docs/DEMANDE_EVOLUTION_SIAMOIS.md).
 
+## Prérequis serveur
+Le plugin envoie les géométries telles quelles (UE : surface, ligne ou point ; mobilier : point ; projet : surface). Le serveur doit
+embarquer la branche `feat/geometry-generic-geom` (sinon : 400 « MultiPolygon attendu »). SDK requis : ≥ 0.4.0.
+
 ## Tests (sans QGIS)
 `python -m unittest discover -s tests -t .` — couvre chargement, détection des changements, envoi, conflits, fichier annexe.
 Le code PyQGIS (`core/qgis_layers.py`, `ui/`, `plugin.py`) est compilé mais **n'a pas encore été exécuté dans QGIS**.

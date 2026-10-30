@@ -39,23 +39,19 @@ Absent. `RecordingUnitType` et `FindType` n'exposent que `concept`, `id`, `formB
 
 ---
 
-## 2. Écriture de la géométrie des mobiliers (bloquant)
+## 2. Géométrie des mobiliers, des UE et des projets — ✅ branche `feat/geometry-generic-geom`
 
-### Besoin
-Éditer la position d'un mobilier dans QGIS et la créer avec la position saisie sur la carte.
+Livré dans la branche `feat/geometry-generic-geom` (à fusionner dans `main`) :
+- `ActionUnit.geom` et `RecordingUnit.geom` passent de `MultiPolygon` à `Geometry` (toute géométrie GeoJSON acceptée) ;
+- `FindCreateRequest` et `FindPatchRequest` acceptent `geom` (absent = inchangé, `null` = supprime) ;
+- l'emprise d'un projet doit rester un `Polygon` ou un `MultiPolygon` (400 sinon).
 
-### État sur `main`
-- L'entité `Specimen` a déjà une colonne `geom` (n'importe quelle géométrie, en pratique un point).
-- `FindResource` expose `geom` en lecture (`PointDTO`).
-- `FindPatchRequest` et `FindCreateRequest` **n'ont pas** de champ `geom`.
+Le plugin (≥ 0.3) et le SDK (≥ 0.4) en tiennent compte : plus d'enveloppe en MultiPolygon, UE en ligne ou en point envoyées
+telles quelles, géométrie du mobilier modifiable. **Prérequis : un serveur qui embarque cette branche**, sinon un `Polygon`
+reste refusé (400 « MultiPolygon attendu »).
 
-### Proposition
-Ajouter `geom` aux deux requêtes, sur le modèle de `RecordingUnitPatchRequest` :
-- `geom` (GeoJSON + `srid`) ; l'absence du champ ne change rien, `null` explicite efface la géométrie (technique `geomPresent` déjà utilisée pour les UE) ;
-- même validation que les UE (SRID, géométrie valide) ;
-- décider si `geom` reste un point (`PointDTO`) ou accepte toute géométrie (comme la colonne).
-
----
+Limite côté plugin : `uo_point` est ponctuelle ; un mobilier dont la géométrie n'est pas un point garde sa géométrie sur le
+serveur (non affichée dans QGIS, signalée au chargement).
 
 ## 3. Révision et gestion de conflit sur le mobilier (important)
 
@@ -73,15 +69,6 @@ Détecter qu'un mobilier a été modifié sur le serveur depuis le chargement da
 
 ---
 
-## 4. Géométrie des UE et des projets : MultiPolygon seulement (constaté)
-
-`ActionUnit.geom` et `RecordingUnit.geom` sont des `MultiPolygon` ; `PATCH /projects/{id}` répond 400 « Une géométrie de type
-MultiPolygon est attendue, reçu : Polygon » pour un simple polygone. Conséquences :
-- le plugin enveloppe désormais un Polygon en MultiPolygon avant l'envoi ;
-- une UE **ligne** ou **point** (tables `ut_ligne`, `ut_point`, `ud_ligne`) ne peut pas être synchronisée : le plugin la signale
-  comme erreur bloquante. Pour le modèle spatial complet, il faudrait que `RecordingUnit.geom` accepte tout type de géométrie
-  (comme `Specimen.geom`, déjà `Geometry`).
-
 ## Hors périmètre de cette demande (déjà couvert ou différé)
 
 | Sujet | État |
@@ -95,6 +82,5 @@ MultiPolygon est attendue, reçu : Polygon » pour un simple polygone. Conséque
 | Géométrie des documents | Hors v1 |
 
 ## Ordre proposé
-1. Point 2 (le plus petit : la colonne existe déjà).
-2. Point 3 (migration + réutilisation du mécanisme des UE).
-3. Point 1 (nouveau champ de configuration, à valider avec Quentin pour les valeurs et la règle des mobiliers).
+1. Point 3 (migration + réutilisation du mécanisme des UE).
+2. Point 1 (nouveau champ de configuration, à valider avec Quentin pour les valeurs et la règle des mobiliers).

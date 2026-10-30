@@ -117,6 +117,17 @@ class BundleTests(unittest.TestCase):
         self.assertEqual(cr.type_id, "11")
         self.assertFalse([i for i in cr.issues if i.blocking])
 
+    def test_non_point_find_geometry_is_not_shown(self):
+        class Client(FakeClient):
+            def finds(self, pid, offset=0, limit=100):
+                page = super().finds(pid, offset, limit)
+                page.items[0].geom = {"type": "Polygon", "srid": 2154, "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]}
+                return page
+
+        b = loader.load_project(Client(), 1, 7)
+        self.assertEqual(b.skipped_find_geoms, 1)
+        self.assertIsNone(b.layer("uo_point").rows[0].geom)
+
     def test_concepts_from_bundle(self):
         b = loader.load_project(FakeClient(), 1, 7)
         rows = loader.concept_rows(b)

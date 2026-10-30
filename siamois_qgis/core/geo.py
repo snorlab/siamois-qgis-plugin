@@ -60,17 +60,3 @@ def dominant_srid(geoms, default: int = 4326) -> int:
             counts[s] = counts.get(s, 0) + 1
     return max(counts, key=counts.get) if counts else default
 
-
-def as_multipolygon(g: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """Géométrie acceptée par SIAMOIS pour un projet ou une UE : MultiPolygon uniquement.
-
-    Retourne (géométrie, erreur). Un Polygon est enveloppé ; une ligne ou un point est refusé (erreur non vide).
-    """
-    if not g:
-        return g, None
-    t = g.get("type")
-    if t == "MultiPolygon":
-        return g, None
-    if t == "Polygon":
-        return {"type": "MultiPolygon", "srid": g.get("srid"), "coordinates": [g["coordinates"]]}, None
-    return None, f"SIAMOIS n'accepte qu'une surface (polygone) pour cet élément, pas : {t}"

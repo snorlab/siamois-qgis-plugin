@@ -147,7 +147,7 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(row.cells["Identifiant complet"], "UE-9")
         self.assertEqual(ru.srid, 2154)
         self.assertEqual(row.revision, 3)
-        self.assertFalse(b.layer("uo_point").geom_editable)  # mobilier : géométrie en lecture seule
+        self.assertTrue(b.layer("uo_point").geom_editable)  # la géométrie du mobilier s'envoie désormais
         self.assertIn("SIARU.TYPE", b.vocab_concepts)
 
     def test_cancel(self):
@@ -180,15 +180,32 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(syncplan.collect_changes("ue", "recording_unit", self.ru.specs, self.base, self.current(),
                                                   self.vocabs, True), [])
 
-    def test_non_surface_geometry_is_refused_for_ue_and_project(self):
+    def test_geometry_rules(self):
         line = {"type": "LineString", "srid": 2154, "coordinates": [[0, 0], [1, 1]]}
         cur = self.current()
         cur["9"]["wkt"], cur["9"]["geojson"] = "LINESTRING (0 0, 1 1)", line
         ch = syncplan.collect_changes("ue", "recording_unit", self.ru.specs, self.base, cur, self.vocabs, True)[0]
-        self.assertTrue(ch.blocking)
-        self.assertFalse(ch.geom_changed)
-        self.assertEqual(syncplan.surface_only("project", MPOLY), (MPOLY, None))
-        self.assertEqual(syncplan.surface_only("find", PT), (PT, None))  # le mobilier n'est pas concerné
+        self.assertFalse(ch.blocking)  # une UE peut être une ligne ou un point
+        self.assertEqual(ch.geom, line)
+        # l'emprise d'un projet reste une surface
+        self.assertEqual(syncplan.check_geometry("project", POLY), (POLY, None))
+        self.assertEqual(syncplan.check_geometry("project", MPOLY), (MPOLY, None))
+        geom, err = syncplan.check_geometry("project", line)
+        self.assertIsNone(geom)
+        self.assertIn("surface", err)
+        self.assertEqual(syncplan.check_geometry("find", PT), (PT, None))
+
+    def test_find_geometry_is_pushed(self):
+        find = self.bundle.layer("uo_point")
+        row = find.rows[0]
+        fb = {"cells": row.cells, "geom_wkt": "POINT (100 200.5)", "revision": None,
+              "incomplete": [], "allowed": row.allowed}
+        cur = {"5": {"cells": row.cells, "wkt": "POINT (1 1)", "geojson": PT}}
+        ch = syncplan.collect_changes("mobilier", "find", find.specs, {"5": fb}, cur, self.vocabs, True)[0]
+        self.assertTrue(ch.geom_changed)
+        syncplan.push(self.client, ch)
+        self.assertEqual(self.client.patches[-1][0], "find")
+        self.assertEqual(self.client.patches[-1][2]["geom"], PT)
 
     def test_changes_and_push(self):
         cur = self.current(Nom="Autre", Statut="En cours")
@@ -198,7 +215,7 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(ch.answers, {"1": {"value": "Autre"}})
         self.assertEqual(ch.validated, "INCOMPLETE")
         self.assertTrue(ch.geom_changed)
-        self.assertEqual(ch.geom, MPOLY)  # Polygon enveloppé : le serveur exige un MultiPolygon
+        self.assertEqual(ch.geom, POLY)  # envoyée telle quelle : le serveur accepte tout type de géométrie
         res = syncplan.push(self.client, ch)
         self.assertEqual(res.status, "ok")
         self.assertEqual(res.new_revision, 4)
@@ -263,7 +280,7 @@ class CreationTests(unittest.TestCase):
         res = syncplan.push_create(self.client, cr, "7")
         self.assertEqual(res.status, "ok")
         kind, pid, kw = self.client.patches[-1]
-        self.assertEqual((kind, pid, kw["type_id"], kw["geom"]), ("create_ru", "7", "11", MPOLY))  # SIAMOIS veut un MultiPolygon
+        self.assertEqual((kind, pid, kw["type_id"], kw["geom"]), ("create_ru", "7", "11", POLY))
         row = syncplan.entity_to_row("recording_unit", res.entity, self.ru.specs, self.vocabs)
         self.assertEqual(row["id"], "100")
         self.assertEqual(row["cells"]["Identifiant complet"], "UE-100")
