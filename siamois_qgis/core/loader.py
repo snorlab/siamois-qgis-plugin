@@ -12,8 +12,10 @@ from siamois_sdk.flatten import (
     row_to_cells,
 )
 from .geo import dominant_srid, srid_of
+from . import spatial_model as sm
 
 FID_FULL = "__fullIdentifier"
+FULL_IDENTIFIER_COLUMN = "Identifiant complet"
 FID_STATUS = "__validated"
 VOCAB_STATUS = "__validated"
 VOCAB_RU = "__ru"  # vocabulaire synthétique : UE du projet (id -> identifiant complet)
@@ -24,9 +26,8 @@ IMMUTABLE_BINDINGS = (BINDING_TYPE, BINDING_RU)  # non modifiables après créat
 STATUS_LABELS = {"INCOMPLETE": "En cours", "COMPLETE": "Terminé", "CANCELLED": "Annulé", "VALIDATED": "Validé"}
 EDITABLE_STATUSES = ("INCOMPLETE", "COMPLETE", "CANCELLED")  # VALIDATED exige un droit validateur : lecture seule
 
-KIND_PROJECT, KIND_RU, KIND_FIND = "project", "recording_unit", "find"
-LAYER_NAMES = {KIND_PROJECT: "projet", KIND_RU: "unites_enregistrement", KIND_FIND: "mobilier"}
-LAYER_TITLES = {KIND_PROJECT: "SIAMOIS – Projet", KIND_RU: "SIAMOIS – Unités d'enregistrement", KIND_FIND: "SIAMOIS – Mobilier"}
+KIND_PROJECT, KIND_RU, KIND_FIND = sm.KIND_PROJECT, sm.KIND_RU, sm.KIND_FIND
+KIND_TITLES = {KIND_PROJECT: "Projet", KIND_RU: "UE", KIND_FIND: "Mobilier"}
 
 
 class Cancelled(Exception):
@@ -44,6 +45,7 @@ class RowData:
     revision: Optional[int] = None
     incomplete: List[str] = field(default_factory=list)
     allowed: Set[str] = field(default_factory=set)  # field_id éditables pour le type de la ligne
+    type_id: Optional[str] = None
 
 
 @dataclass
@@ -57,6 +59,8 @@ class LayerData:
     geom_editable: bool = True
     type_allowed: Dict[str, Set[str]] = field(default_factory=dict)  # type_id -> field_id du formulaire du type
     default_allowed: Set[str] = field(default_factory=set)
+    table: str = ""  # table du modèle spatial (= nom de la couche)
+    visible: bool = True  # ajoutée au projet QGIS (les tables vides, hors tables par défaut, restent dans le fichier)
 
     @property
     def has_geometry(self) -> bool:
@@ -71,6 +75,17 @@ class ProjectBundle:
     layers: List[LayerData]
     vocab_concepts: Dict[str, List[Dict[str, Any]]]
     base_url: str = ""
+    spatial: sm.SpatialConfig = field(default_factory=sm.SpatialConfig)
+    author: str = sm.AUTHOR_FALLBACK
+
+    def layer(self, table: str) -> LayerData:
+        return next(l for l in self.layers if l.name == table)
+
+    def layers_of(self, kind: str) -> List[LayerData]:
+        return [l for l in self.layers if l.kind == kind]
+
+    def count(self, kind: str) -> int:
+        return sum(len(l.rows) for l in self.layers_of(kind))
 
 
 def status_vocabulary() -> Vocabulary:
@@ -79,7 +94,7 @@ def status_vocabulary() -> Vocabulary:
 
 def fixed_specs() -> List[ColumnSpec]:
     return [
-        ColumnSpec("Identifiant complet", FID_FULL, TEXT, "TEXT", editable=False),
+        ColumnSpec(FULL_IDENTIFIER_COLUMN, FID_FULL, TEXT, "TEXT", editable=False),
         ColumnSpec("Statut", FID_STATUS, CHOICE, "SELECT_ONE_FROM_FIELD_CODE", vocab_code=VOCAB_STATUS),
     ]
 
@@ -114,8 +129,10 @@ def _vocab_codes(layers: List[LayerData]) -> Set[str]:
     return {s.vocab_code for l in layers for s in l.specs if s.vocab_code and s.vocab_code != VOCAB_STATUS}
 
 
-def load_project(client: SiamoisClient, org_id: Any, project_id: Any, progress: Optional[Progress] = None) -> ProjectBundle:
-    """Charge projet + UE + mobilier. Lève `Cancelled` si `progress(...)` renvoie False."""
+def load_project(client: SiamoisClient, org_id: Any, project_id: Any, progress: Optional[Progress] = None,
+                 spatial: Optional[sm.SpatialConfig] = None, author: str = sm.AUTHOR_FALLBACK) -> ProjectBundle:
+    """Charge projet + UE + mobilier, rangés dans les tables du modèle spatial. Lève `Cancelled` si `progress(...)` renvoie False."""
+    spatial = spatial or sm.SpatialConfig()
     _step(progress, "Projet")
     project = client.project(project_id, fields="all")
     pid = project.id
@@ -165,7 +182,7 @@ def load_project(client: SiamoisClient, org_id: Any, project_id: Any, progress: 
         ans = entity_answers(KIND_RU, ru, ru_specs)
         allowed = default_allowed | ru_allowed.get(ru.type_id or "", set())
         ru_rows.append(RowData(ru.id, row_to_cells(ru_specs, ans, vocabs), ru.geom, ru.sync_revision,
-                               incomplete_columns(ru_specs, ru.answers), allowed))
+                               incomplete_columns(ru_specs, ru.answers), allowed, ru.type_id))
     if progress and progress("Unités d'enregistrement", len(ru_rows), len(ru_rows)) is False:
         raise Cancelled()
 
@@ -186,17 +203,61 @@ def load_project(client: SiamoisClient, org_id: Any, project_id: Any, progress: 
         ans = entity_answers(KIND_FIND, f, find_specs)
         allowed = default_find | find_allowed.get(f.type_id or "", set())
         find_rows.append(RowData(f.id, row_to_cells(find_specs, ans, vocabs), f.geom, None,
-                                 incomplete_columns(find_specs, f.answers), allowed))
+                                 incomplete_columns(find_specs, f.answers), allowed, f.type_id))
 
-    layers = [
-        LayerData(KIND_PROJECT, LAYER_NAMES[KIND_PROJECT], LAYER_TITLES[KIND_PROJECT], project_specs, [p_row],
-                  srid_of(project.geom)),
-        LayerData(KIND_RU, LAYER_NAMES[KIND_RU], LAYER_TITLES[KIND_RU], ru_specs, ru_rows,
-                  dominant_srid(r.geom for r in ru_rows), type_allowed=ru_allowed, default_allowed=default_allowed),
-        # L'API ne permet pas de modifier la géométrie d'un mobilier : lecture seule
-        LayerData(KIND_FIND, LAYER_NAMES[KIND_FIND], LAYER_TITLES[KIND_FIND], find_specs, find_rows,
-                  dominant_srid(r.geom for r in find_rows), geom_editable=False,
-                  type_allowed={t: a | {FID_FULL, FID_STATUS} for t, a in find_allowed.items()},
-                  default_allowed=default_find),
-    ]
-    return ProjectBundle(str(org_id), pid, project.name, layers, vocab_concepts, client.base_url)
+    layers = [LayerData(KIND_PROJECT, sm.PROJECT_TABLE, layer_title(KIND_PROJECT, sm.PROJECT_TABLE), project_specs,
+                        [p_row], srid_of(project.geom), table=sm.PROJECT_TABLE)]
+    ru_type = type_column(ru_specs)
+    find_type = type_column(find_specs)
+    ru_layers = split_by_table(KIND_RU, ru_specs, ru_rows, ru_type, spatial,
+                               type_allowed=ru_allowed, default_allowed=default_allowed)
+    # L'API ne permet pas de modifier la géométrie d'un mobilier : lecture seule
+    find_layers = split_by_table(KIND_FIND, find_specs, find_rows, find_type, spatial, geom_editable=False,
+                                 type_allowed={t: a | {FID_FULL, FID_STATUS} for t, a in find_allowed.items()},
+                                 default_allowed=default_find)
+    layers += ru_layers + find_layers
+    return ProjectBundle(str(org_id), pid, project.name, layers, vocab_concepts, client.base_url, spatial, author)
+
+
+def layer_title(kind: str, table: str) -> str:
+    t = sm.ENTITY_TABLES.get(table)
+    return f"SIAMOIS – {KIND_TITLES[kind]} · {table}" + (f" ({t.title})" if t else "")
+
+
+def type_column(specs: List[ColumnSpec]) -> Optional[str]:
+    """Nom de la colonne « Type » (champ lié au type de l'entité), s'il existe."""
+    return next((s.name for s in specs if s.binding == BINDING_TYPE), None)
+
+
+def split_by_table(kind: str, specs: List[ColumnSpec], rows: List[RowData], type_col: Optional[str],
+                   config: sm.SpatialConfig, geom_editable: bool = True, **layer_kwargs) -> List[LayerData]:
+    """Une couche par table du modèle compatible avec `kind` ; chaque ligne va dans la table choisie par `choose_table`."""
+    per_table: Dict[str, List[RowData]] = {name: [] for name in sm.tables_for_kind(kind)}
+    for r in rows:
+        label = r.cells.get(type_col) if type_col else None
+        per_table[sm.choose_table(kind, r.geom, label if isinstance(label, str) else None, config)].append(r)
+    keep = {sm.DEFAULT_TABLE[kind], sm.table_for_default_geometry(kind, config)}
+    out = []
+    for name, items in per_table.items():
+        out.append(LayerData(kind, name, layer_title(kind, name), specs, items, dominant_srid(r.geom for r in items),
+                             geom_editable=geom_editable, table=name, visible=bool(items) or name in keep,
+                             **layer_kwargs))
+    return out
+
+
+def concept_rows(bundle: ProjectBundle) -> List[Dict[str, Any]]:
+    """Lignes de la table `concept` : libellés des listes de chaque table du modèle (type compris)."""
+    sources: Dict[str, List] = {}
+    for ld in bundle.layers:
+        if not ld.rows:
+            continue
+        t = sm.ENTITY_TABLES.get(ld.table)
+        cols = []
+        for s in ld.specs:
+            code = s.vocab_code
+            if s.kind != CHOICE or not code or code in (VOCAB_STATUS, VOCAB_RU) or code not in bundle.vocab_concepts:
+                continue
+            column = t.typ_col if (t is not None and s.binding == BINDING_TYPE) else s.name
+            cols.append((column, code, bundle.vocab_concepts[code]))
+        sources[ld.table] = cols
+    return sm.build_concepts(sources, bundle.author)

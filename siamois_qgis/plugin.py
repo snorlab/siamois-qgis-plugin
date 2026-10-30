@@ -12,10 +12,10 @@ from qgis.PyQt.QtWidgets import QAction, QApplication, QFileDialog, QMessageBox,
 from ._sdk import siamois_sdk  # noqa: F401
 from siamois_sdk import SiamoisClient
 from siamois_sdk.flatten import ColumnSpec
-from .core import loader, log, qgis_layers as ql, syncplan
+from .core import loader, log, qgis_layers as ql, spatial_model as sm, syncplan
 from .core.geo import geojson_to_wkt
 from .core.store import Store
-from .ui.dialogs import LoginDialog, OpenProjectDialog, ReportDialog
+from .ui.dialogs import LoginDialog, OpenProjectDialog, ReportDialog, SpatialConfigDialog
 
 TITLE = "SIAMOIS"
 SETTINGS = "siamois/"
@@ -63,6 +63,7 @@ class SiamoisPlugin:
 
         add("Ouvrir un projet SIAMOIS…", self.open_project)
         add("Ouvrir la fiche de l'élément sélectionné", self.open_form)
+        add("Répartition dans le modèle spatial…", self.configure_spatial)
         add("Vérifier mes modifications", self.verify)
         add("Synchroniser avec SIAMOIS", self.sync)
 
@@ -127,9 +128,20 @@ class SiamoisPlugin:
             return
         s.setValue(SETTINGS + "dir", folder)
         gpkg = os.path.join(folder, f"siamois_{project_id}.gpkg")
+        self._start_load(client, org_id, project_id, gpkg)
+
+    def _spatial_key(self, org_id, project_id) -> str:
+        return f"{SETTINGS}spatial/{org_id}_{project_id}"
+
+    def _spatial_config(self, org_id, project_id) -> sm.SpatialConfig:
+        return sm.SpatialConfig.from_json(QgsSettings().value(self._spatial_key(org_id, project_id), ""))
+
+    def _start_load(self, client, org_id, project_id, gpkg: str):
         db = gpkg + ".siamois.db"
         if not self._confirm_overwrite(db):
             return
+        config = self._spatial_config(org_id, project_id)
+        author = QgsSettings().value(SETTINGS + "email", "") or sm.AUTHOR_FALLBACK
 
         log.info(f"Chargement du projet {project_id} (organisation {org_id}) vers {gpkg}")
 
@@ -140,7 +152,7 @@ class SiamoisPlugin:
                 if total:
                     task.setProgress(100.0 * done / total)
                 return not task.isCanceled()
-            return loader.load_project(client, org_id, project_id, progress)
+            return loader.load_project(client, org_id, project_id, progress, config, author)
 
         self._run("SIAMOIS – chargement du projet", work,
                   lambda bundle, err: self._loaded(bundle, err, gpkg, db))
@@ -180,18 +192,21 @@ class SiamoisPlugin:
             store.set_meta("org_id", bundle.org_id)
             store.set_meta("project_id", bundle.project_id)
             store.set_meta("project_name", bundle.project_name)
+            store.set_meta("spatial", bundle.spatial.to_json())
+            store.set_meta("author", bundle.author)
             vocabs = {loader.VOCAB_STATUS: loader.status_vocabulary()}
             for code, concepts in bundle.vocab_concepts.items():
                 store.save_vocab(code, concepts)
             from siamois_sdk.flatten import Vocabulary
             vocabs.update({c: Vocabulary(v) for c, v in bundle.vocab_concepts.items()})
-            layers = ql.add_to_project(bundle, gpkg, db, vocabs)
-            for ld, layer in zip(bundle.layers, layers):
+            shown = ql.add_to_project(bundle, gpkg, db, vocabs)
+            for ld in bundle.layers:  # toutes les tables, même celles qui ne sont pas affichées
                 store.save_layer(ld.name, ld.kind, ld.srid, ld.specs, ld.type_allowed, ld.default_allowed)
                 wkts = {r.id: ql.norm_wkt(self._wkt(r.geom)) for r in ld.rows}
                 store.save_base(ld.name, [{"id": r.id, "cells": r.cells, "geom_wkt": wkts[r.id], "revision": r.revision,
                                            "incomplete": r.incomplete, "allowed": r.allowed} for r in ld.rows])
-                layer.afterCommitChanges.connect(self._on_commit)
+            for ld, layer in shown:
+                layer.afterCommitChanges.connect(lambda lyr=layer: self._on_commit(lyr))
             store.close()
         except Exception as exc:  # noqa: BLE001 - tout échec d'écriture doit être montré
             log.error(f"Échec de la création des couches ({gpkg})", exc)
@@ -200,17 +215,74 @@ class SiamoisPlugin:
             return
         finally:
             QApplication.restoreOverrideCursor()
-        n = {ld.kind: len(ld.rows) for ld in bundle.layers}
-        self._msg(f"Projet « {bundle.project_name} » chargé : {n[loader.KIND_RU]} unité(s) d'enregistrement, "
-                  f"{n[loader.KIND_FIND]} mobilier(s). Fichier : {gpkg}", Qgis.Success, 10)
+        tables = ", ".join(f"{ld.name} ({len(ld.rows)})" for ld in bundle.layers if ld.rows)
+        self._msg(f"Projet « {bundle.project_name} » chargé : {bundle.count(loader.KIND_RU)} unité(s) d'enregistrement, "
+                  f"{bundle.count(loader.KIND_FIND)} mobilier(s). Tables : {tables}. Fichier : {gpkg}", Qgis.Success, 10)
 
     @staticmethod
     def _wkt(geojson):
         from .core.geo import geojson_to_wkt
         return geojson_to_wkt(geojson)
 
-    def _on_commit(self):
+    def _on_commit(self, layer=None):
+        if layer is not None:
+            self._refresh_mirrors(layer)
         self._msg("Modifications enregistrées localement.", Qgis.Info, 6, ("Synchroniser maintenant", self.sync))
+
+    @staticmethod
+    def _refresh_mirrors(layer) -> None:
+        """Les colonnes numXXX / typXXX du modèle suivent « Identifiant complet » et « Type »."""
+        db = layer.customProperty(ql.PROP_DB)
+        if not db or not os.path.exists(db):
+            return
+        store = Store(db)
+        try:
+            info = store.layer(layer.customProperty(ql.PROP_NAME))
+            if info:
+                ql.refresh_mirrors(layer, info["columns"], layer.customProperty(ql.PROP_TABLE), info["kind"])
+        finally:
+            store.close()
+
+    # ------------------------------------------------------------------ répartition dans le modèle spatial
+
+    def configure_spatial(self):
+        """Choix de la table du modèle pour chaque type d'UE, et de la géométrie par défaut ; recharge le projet."""
+        layers = ql.siamois_layers()
+        if not layers:
+            self._msg("Ouvrez d'abord un projet SIAMOIS.", Qgis.Warning)
+            return
+        db = layers[0].customProperty(ql.PROP_DB)
+        store = Store(db)
+        try:
+            org, pid = store.get_meta("org_id"), store.get_meta("project_id")
+            config = sm.SpatialConfig.from_json(store.get_meta("spatial"))
+            labels = self._type_labels(store)
+        finally:
+            store.close()
+        dlg = SpatialConfigDialog(self.iface.mainWindow(), labels, config)
+        if dlg.exec_() != SpatialConfigDialog.Accepted:
+            return
+        QgsSettings().setValue(self._spatial_key(org, pid), dlg.config().to_json())
+        gpkg = db[: -len(".siamois.db")]
+        self._msg("Répartition enregistrée. Rechargez le projet pour l'appliquer (les modifications locales non "
+                  "synchronisées seraient perdues).", Qgis.Info, 0,
+                  ("Recharger maintenant", lambda: self._reload(org, pid, gpkg)))
+
+    @staticmethod
+    def _type_labels(store: Store) -> List[str]:
+        """Libellés de type rencontrés dans les UE du projet (toutes tables confondues)."""
+        out = set()
+        for ln in [n for (n,) in store.db.execute("SELECT name FROM layers WHERE kind=?", (loader.KIND_RU,))]:
+            info = store.layer(ln)
+            col = loader.type_column(info["columns"]) if info else None
+            if col:
+                out |= {b["cells"].get(col) for b in store.base(ln).values() if b["cells"].get(col)}
+        return sorted(out)
+
+    def _reload(self, org_id, project_id, gpkg: str) -> None:
+        client = self._ensure_client()
+        if client is not None:
+            self._start_load(client, org_id, project_id, gpkg)
 
     # ------------------------------------------------------------------ fiche
 
@@ -387,6 +459,7 @@ class SiamoisPlugin:
         cr, e = res.change, res.entity
         row = syncplan.entity_to_row(c.kind, e, c.specs, c.vocabs)
         ql.apply_created_row(c.layer, cr.fid, c.specs, row["id"], row["cells"], row["revision"])
+        ql.refresh_mirrors(c.layer, c.specs, c.layer.customProperty(ql.PROP_TABLE), c.kind)
         allowed = set(c.info["default_allowed"]) | set(c.info["type_allowed"].get(cr.type_id or "", ()))
         c.store.add_base(c.name, {"id": row["id"], "cells": row["cells"], "geom_wkt": cr.current_wkt,
                                   "revision": row["revision"], "incomplete": [], "allowed": allowed})

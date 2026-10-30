@@ -10,7 +10,7 @@ else DEST="$HOME/.local/share/QGIS/QGIS3/profiles/default/python/plugins"; fi
 rm -rf "$DEST/siamois_qgis"
 cp -R siamois_qgis "$DEST/siamois_qgis"
 mkdir -p "$DEST/siamois_qgis/vendor"
-cp -R ../siamois-sdk-python/siamois_sdk "$DEST/siamois_qgis/vendor/siamois_sdk"
+cp -R "${SIAMOIS_SDK:-../siamois-python-sdk}/siamois_sdk" "$DEST/siamois_qgis/vendor/siamois_sdk"
 find "$DEST/siamois_qgis" -name __pycache__ -prune -exec rm -rf {} +
 echo "Installé dans $DEST/siamois_qgis (SDK $(grep -o '__version__ = "[^"]*"' "$DEST/siamois_qgis/vendor/siamois_sdk/__init__.py"))"
 echo "Redémarrez QGIS."

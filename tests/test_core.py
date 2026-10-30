@@ -3,7 +3,7 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "siamois-sdk-python"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "siamois-python-sdk"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from siamois_sdk import ConflictError, ValidationError, parse_form  # noqa: E402
@@ -124,8 +124,10 @@ class LoaderTests(unittest.TestCase):
     def test_load_project(self):
         steps = []
         b = loader.load_project(FakeClient(), 1, 7, lambda *a: steps.append(a) or True)
-        self.assertEqual([l.name for l in b.layers], ["projet", "unites_enregistrement", "mobilier"])
-        ru = b.layers[1]
+        self.assertEqual([l.name for l in b.layers],
+                         ["projet", "ut_poly", "ut_ligne", "ut_point", "uo_poly", "ur_poly", "ud_poly", "ud_ligne",
+                          "uo_point"])
+        ru = b.layer("ut_point")  # l'UE du test a une géométrie ponctuelle
         names = [s.name for s in ru.specs]
         self.assertEqual(names[:2], ["Identifiant complet", "Statut"])
         self.assertIn("Nom", names)
@@ -135,7 +137,7 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(row.cells["Identifiant complet"], "UE-9")
         self.assertEqual(ru.srid, 2154)
         self.assertEqual(row.revision, 3)
-        self.assertFalse(b.layers[2].geom_editable)  # mobilier : géométrie en lecture seule
+        self.assertFalse(b.layer("uo_point").geom_editable)  # mobilier : géométrie en lecture seule
         self.assertIn("SIARU.TYPE", b.vocab_concepts)
 
     def test_cancel(self):
@@ -153,7 +155,7 @@ class SyncTests(unittest.TestCase):
     def setUp(self):
         self.client = FakeClient()
         self.bundle = loader.load_project(self.client, 1, 7)
-        self.ru = self.bundle.layers[1]
+        self.ru = self.bundle.layer("ut_point")
         self.vocabs = {c: Vocabulary(v) for c, v in self.bundle.vocab_concepts.items()}
         self.vocabs[loader.VOCAB_STATUS] = loader.status_vocabulary()
         r = self.ru.rows[0]
@@ -213,7 +215,7 @@ class CreationTests(unittest.TestCase):
     def setUp(self):
         self.client = FakeClient()
         b = loader.load_project(self.client, 1, 7)
-        self.ru, self.find = b.layers[1], b.layers[2]
+        self.ru, self.find = b.layer("ut_point"), b.layer("uo_point")
         self.vocabs = {c: Vocabulary(v) for c, v in b.vocab_concepts.items()}
         self.vocabs[loader.VOCAB_STATUS] = loader.status_vocabulary()
 
@@ -297,7 +299,7 @@ class StoreTests(unittest.TestCase):
         b = loader.load_project(FakeClient(), 1, 7)
         with tempfile.TemporaryDirectory() as d:
             s = Store(os.path.join(d, "p.siamois.db"))
-            l = b.layers[1]
+            l = b.layer("ut_point")
             s.save_layer(l.name, l.kind, l.srid, l.specs, l.type_allowed, l.default_allowed)
             s.save_base(l.name, [{"id": r.id, "cells": r.cells, "geom_wkt": "POINT (1 2)", "revision": r.revision,
                                   "incomplete": r.incomplete, "allowed": r.allowed} for r in l.rows])

@@ -1,6 +1,7 @@
 # Plugin QGIS SIAMOIS (v1, expérimental)
 
-Charge un projet SIAMOIS dans un **GeoPackage local** (3 couches : projet, unités d'enregistrement, mobilier),
+Charge un projet SIAMOIS dans un **GeoPackage local au format du modèle de données spatiales SIAMOIS**
+(Quentin Verriez : `projet`, `ut_*`, `uo_*`, `ur_poly`, `ud_*`, `metadonnees`, `concept`, `personne`, `raster`, `lien_*`),
 permet l'édition classique QGIS ou via la fiche, puis **synchronise** vers l'API. Voir
 [`docs/CONCEPTION_CHARGEMENT_COUCHES.md`](docs/CONCEPTION_CHARGEMENT_COUCHES.md).
 
@@ -14,6 +15,14 @@ Menu **SIAMOIS** : *Ouvrir un projet…* (connexion, organisation, projet) ▸ �
 
 **Créer un élément** : ajouter une ligne dans la couche UE (type obligatoire, géométrie optionnelle) ou mobilier (type + UE),
 enregistrer la couche, puis synchroniser : l'identifiant est attribué par le serveur. Créer l'UE avant ses mobiliers.
+
+## Modèle spatial
+Chaque UE est rangée dans une table du modèle ; le mobilier va dans `uo_point`. Sans évolution du serveur, la table est
+choisie ainsi : (1) le type d'UE → table saisi dans *SIAMOIS ▸ Répartition dans le modèle spatial…* ; (2) sinon la
+**géométrie réelle** (surface → `uo_poly`, ligne → `ut_ligne`, point → `ut_point`) ; (3) sinon la **géométrie par défaut de la
+table SIAMOIS** (UE : polygone, réglable ; mobilier : point ; projet : polygone). Changer la répartition recharge le projet.
+Les colonnes `siamois_id` / `siamois_revision` portent la synchronisation ; `numXXX` et `typXXX` recopient l'identifiant
+complet et le type. Détails et demandes d'évolution serveur : [`docs/DEMANDE_EVOLUTION_SIAMOIS.md`](docs/DEMANDE_EVOLUTION_SIAMOIS.md).
 
 ## Tests (sans QGIS)
 `python -m unittest discover -s tests -t .` — couvre chargement, détection des changements, envoi, conflits, fichier annexe.

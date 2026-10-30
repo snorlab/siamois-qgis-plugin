@@ -100,7 +100,7 @@ du document 1.0 est remplacé par `syncRevision`.) Les projets/mobiliers n'ont p
 messages en français (SDK `errors.py`), affichés ligne par ligne dans le rapport.
 
 ## 5. Architecture
-- `siamois-sdk-python` (`siamois_sdk`) : client API, formulaires, mise à plat/résolution — **sans QGIS**, testé.
+- `siamois-python-sdk` (`siamois_sdk`) : client API, formulaires, mise à plat/résolution — **sans QGIS**, testé.
 - `siamois-qgis-plugin` : `core/loader` + `core/syncplan` + `core/store` (purs, testés) ; `core/qgis_layers`, `ui/`,
   `plugin.py` (PyQGIS). Réseau hors fil principal (QgsTask). Packaging : `build.sh` (SDK embarqué dans `vendor/`).
 - Compatibilité : QGIS ≥ 3.22.

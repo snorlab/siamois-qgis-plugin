@@ -12,6 +12,7 @@ from qgis.PyQt.QtWidgets import (
 
 from .._sdk import siamois_sdk  # noqa: F401
 from siamois_sdk import SiamoisClient, SiamoisError
+from ..core import spatial_model as sm
 
 
 class LoginDialog(QDialog):
@@ -144,3 +145,62 @@ class ReportDialog(QDialog):
 
     def decisions(self) -> Dict[str, str]:
         return {k: ("local" if b.currentText() == self.LOCAL else "server") for k, b in self.choices.items()}
+
+
+class SpatialConfigDialog(QDialog):
+    """Répartition des UE dans les tables du modèle spatial : table par type, et géométrie par défaut."""
+
+    GEOMETRIES = [("Polygone", sm.POLYGON), ("Ligne", sm.LINE), ("Point", sm.POINT)]
+
+    def __init__(self, parent=None, type_labels: Optional[List[str]] = None, config: Optional[sm.SpatialConfig] = None):
+        super().__init__(parent)
+        self.setWindowTitle("SIAMOIS – Répartition dans le modèle spatial")
+        self.resize(560, 460)
+        config = config or sm.SpatialConfig()
+        self._labels = list(type_labels or [])
+
+        self.geometry_box = QComboBox()
+        for text, value in self.GEOMETRIES:
+            self.geometry_box.addItem(text, value)
+        self.geometry_box.setCurrentIndex(max(0, self.geometry_box.findData(
+            config.default_geometry.get(sm.KIND_RU, sm.POLYGON))))
+        form = QFormLayout()
+        form.addRow("Géométrie par défaut d'une UE sans géométrie", self.geometry_box)
+
+        self.table = QTableWidget(len(self._labels), 2)
+        self.table.setHorizontalHeaderLabels(["Type d'UE", "Table du modèle"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.verticalHeader().setVisible(False)
+        self._boxes: List[QComboBox] = []
+        for row, label in enumerate(self._labels):
+            item = QTableWidgetItem(label)
+            item.setFlags(Qt.ItemIsEnabled)
+            self.table.setItem(row, 0, item)
+            box = QComboBox()
+            box.addItem("Automatique (selon la géométrie)", sm.AUTO)
+            for name in sm.tables_for_kind(sm.KIND_RU):
+                box.addItem(f"{name} – {sm.ENTITY_TABLES[name].title}", name)
+            box.setCurrentIndex(max(0, box.findData(config.type_tables.get(label, sm.AUTO))))
+            self.table.setCellWidget(row, 1, box)
+            self._boxes.append(box)
+
+        info = QLabel(
+            "Chaque UE est rangée dans une table du modèle spatial. Sans choix pour son type, la table dépend de la "
+            "géométrie réelle de l'UE (surface → uo_poly, ligne → ut_ligne, point → ut_point) ; une UE sans géométrie "
+            "reçoit la géométrie par défaut ci-dessous. Le mobilier est toujours rangé dans uo_point.")
+        info.setWordWrap(True)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        lay = QVBoxLayout(self)
+        lay.addWidget(info)
+        lay.addLayout(form)
+        lay.addWidget(self.table)
+        lay.addWidget(buttons)
+
+    def config(self) -> sm.SpatialConfig:
+        cfg = sm.SpatialConfig()
+        cfg.default_geometry[sm.KIND_RU] = self.geometry_box.currentData()
+        cfg.type_tables = {label: box.currentData() for label, box in zip(self._labels, self._boxes)
+                           if box.currentData() != sm.AUTO}
+        return cfg

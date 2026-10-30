@@ -1,6 +1,6 @@
 """Rend `siamois_sdk` importable et vérifie qu'il est assez récent pour ce plugin.
 
-Ordre de recherche : `vendor/` (SDK embarqué dans le zip) > dépôt de dev (`../../siamois-sdk-python`) > SDK installé.
+Ordre de recherche : `vendor/` (SDK embarqué dans le zip) > dépôt de dev frère (`../../siamois-python-sdk`) > SDK installé.
 Le SDK embarqué est *préféré* à un `siamois_sdk` déjà présent dans l'environnement Python de QGIS.
 """
 
@@ -28,7 +28,9 @@ def _use(path):
 
 
 _here = os.path.dirname(os.path.abspath(__file__))
-for _candidate in (os.path.join(_here, "vendor"), os.path.join(_here, "..", "..", "siamois-sdk-python")):
+for _candidate in (os.path.join(_here, "vendor"),
+                   os.path.join(_here, "..", "..", "siamois-python-sdk"),  # dépôt frère (MOM-CNRS/siamois-python-sdk)
+                   os.path.join(_here, "..", "..", "siamois-sdk-python")):
     if os.path.isdir(os.path.join(_candidate, "siamois_sdk")):
         _use(os.path.abspath(_candidate))
         break
