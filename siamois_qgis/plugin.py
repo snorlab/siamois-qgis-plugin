@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from qgis.core import Qgis, QgsApplication, QgsProject, QgsSettings, QgsTask
+from qgis.core import Qgis, QgsApplication, QgsProject, QgsSettings, QgsTask, QgsWkbTypes
+from qgis.gui import QgsMapToolCapture, QgsMapToolDigitizeFeature
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QAction, QApplication, QFileDialog, QMessageBox, QPushButton
 
@@ -63,6 +64,7 @@ class SiamoisPlugin:
 
         add("Ouvrir un projet SIAMOIS…", self.open_project)
         add("Ouvrir la fiche de l'élément sélectionné", self.open_form)
+        add("Dessiner la géométrie de l'élément sélectionné", self.draw_geometry)
         add("Répartition dans le modèle spatial…", self.configure_spatial)
         add("Vérifier mes modifications", self.verify)
         add("Synchroniser avec SIAMOIS", self.sync)
@@ -296,6 +298,54 @@ class SiamoisPlugin:
             self._msg("Sélectionnez un élément de la couche (outil de sélection ou table d'attributs).", Qgis.Warning)
             return
         self.iface.openFeatureForm(layer, feats[0], True)
+
+    # ------------------------------------------------------------------ géométrie d'un élément existant
+
+    def draw_geometry(self):
+        """Dessine la géométrie de l'élément sélectionné (utile quand il n'en a pas : « Ajouter une partie » est
+        inactif sur une couche à géométrie simple)."""
+        layer = self.iface.activeLayer()
+        if layer is None or not layer.customProperty(ql.PROP_DB):
+            self._msg("Sélectionnez une couche SIAMOIS puis un élément.", Qgis.Warning)
+            return
+        if layer.customProperty(ql.PROP_KIND) == loader.KIND_FIND:
+            self._msg("La géométrie d'un mobilier ne peut pas être envoyée à SIAMOIS (limite de l'API).", Qgis.Warning)
+            return
+        feats = layer.selectedFeatures()
+        if len(feats) != 1:
+            self._msg("Sélectionnez un seul élément de la couche.", Qgis.Warning)
+            return
+        modes = {QgsWkbTypes.PolygonGeometry: QgsMapToolCapture.CapturePolygon,
+                 QgsWkbTypes.LineGeometry: QgsMapToolCapture.CaptureLine,
+                 QgsWkbTypes.PointGeometry: QgsMapToolCapture.CapturePoint}
+        mode = modes.get(layer.geometryType())
+        if mode is None:
+            self._msg("Cette couche n'a pas de géométrie.", Qgis.Warning)
+            return
+        fid = feats[0].id()
+        if not layer.isEditable():
+            layer.startEditing()
+        canvas = self.iface.mapCanvas()
+        self._previous_tool = canvas.mapTool()
+        tool = QgsMapToolDigitizeFeature(canvas, self.iface.cadDockWidget(), mode)
+        tool.setLayer(layer)
+        tool.digitizingCompleted.connect(lambda feature, lyr=layer, f=fid: self._geometry_drawn(lyr, f, feature))
+        self._draw_tool = tool
+        canvas.setMapTool(tool)
+        self._msg("Dessinez sur la carte : clic gauche pour poser un sommet, clic droit pour terminer.", Qgis.Info, 10)
+
+    def _geometry_drawn(self, layer, fid: int, feature) -> None:
+        geom = feature.geometry()
+        if geom is not None and not geom.isNull():
+            if QgsWkbTypes.isMultiType(layer.wkbType()) and not geom.isMultipart():
+                geom.convertToMultiType()
+            layer.changeGeometry(fid, geom)
+        canvas = self.iface.mapCanvas()
+        canvas.unsetMapTool(self._draw_tool)
+        if getattr(self, "_previous_tool", None) is not None:
+            canvas.setMapTool(self._previous_tool)
+        self._draw_tool = None
+        self._msg("Géométrie ajoutée. Enregistrez la couche (crayon), puis synchronisez.", Qgis.Success, 8)
 
     # ------------------------------------------------------------------ vérification / synchronisation
 

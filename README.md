@@ -10,7 +10,7 @@ permet l'édition classique QGIS ou via la fiche, puis **synchronise** vers l'AP
 - Zip : `./build.sh` → `dist/siamois_qgis.zip` (SDK embarqué) → *Extensions ▸ Installer depuis un ZIP*.
 
 ## Utiliser
-Menu **SIAMOIS** : *Ouvrir un projet…* (connexion, organisation, projet) ▸ éditer ▸ *Ouvrir la fiche* ▸
+Menu **SIAMOIS** : *Ouvrir un projet…* (connexion, organisation, projet) ▸ éditer ▸ *Ouvrir la fiche* ▸ (*Dessiner la géométrie de l'élément sélectionné* pour un élément sans géométrie) ▸
 *Vérifier mes modifications* ▸ *Synchroniser avec SIAMOIS*.
 
 **Créer un élément** : ajouter une ligne dans la couche UE (type obligatoire, géométrie optionnelle) ou mobilier (type + UE),
