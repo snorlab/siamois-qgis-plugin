@@ -15,6 +15,7 @@ from siamois_sdk import AuthenticationError, ConflictError, SiamoisClient, Siamo
 from siamois_sdk.flatten import (
     ColumnSpec, Issue, Vocabularies, cells_to_create, cells_to_patch, find_by_binding, resolve_label, row_to_cells,
 )
+from .geo import as_multipolygon
 from .loader import (
     BINDING_RU, BINDING_TYPE, FID_FULL, FID_STATUS, IMMUTABLE_BINDINGS, KIND_FIND, KIND_PROJECT, KIND_RU, VOCAB_RU,
     entity_answers,
@@ -54,6 +55,13 @@ class PushResult:
     conflict: Optional[ConflictError] = None
 
 
+def surface_only(kind: str, geojson):
+    """Projet et UE : le serveur exige un MultiPolygon (un Polygon est enveloppé, ligne/point refusés)."""
+    if kind in (KIND_PROJECT, KIND_RU):
+        return as_multipolygon(geojson)
+    return geojson, None
+
+
 def collect_changes(layer: str, kind: str, specs: List[ColumnSpec], base: Dict[str, Dict[str, Any]],
                     current: Dict[str, Dict[str, Any]], vocabs: Vocabularies, geom_editable: bool) -> List[RowChange]:
     """`current` : id -> {"cells": {...}, "wkt": str|None, "geojson": dict|None}.
@@ -89,7 +97,11 @@ def collect_changes(layer: str, kind: str, specs: List[ColumnSpec], base: Dict[s
         ch.answers = answers
         if (cur.get("wkt") or None) != (b.get("geom_wkt") or None):
             if geom_editable:
-                ch.geom_changed, ch.geom = True, cur.get("geojson")
+                geom, err = surface_only(kind, cur.get("geojson"))
+                if err:
+                    ch.issues.append(Issue("géométrie", err))
+                else:
+                    ch.geom_changed, ch.geom = True, geom
             else:
                 ch.issues.append(Issue("géométrie", "la géométrie de cette couche est en lecture seule : ignorée", False))
         out.append(ch)
@@ -224,7 +236,9 @@ def collect_creations(layer: str, kind: str, specs: List[ColumnSpec], new_rows: 
         # géométrie
         if r.get("geojson"):
             if geom_editable:
-                cr.geom = r["geojson"]
+                cr.geom, err = surface_only(kind, r["geojson"])
+                if err:
+                    cr.issues.append(Issue("géométrie", err))
             else:
                 cr.issues.append(Issue("géométrie", "la géométrie d'un mobilier ne peut pas être envoyée : ignorée", False))
         ident = next((str(v) for k, v in cells.items() if k not in (type_spec.name if type_spec else "",)), None)

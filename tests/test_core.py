@@ -27,6 +27,9 @@ FIELDS = {
 # Sur le vrai serveur le type n'est pas un champ du formulaire (en-tête de la fiche) : le plugin ajoute la colonne « Type »
 FIELDS_NO_TYPE = {k: v for k, v in FIELDS.items() if k != "2"}
 PT = {"type": "Point", "srid": 2154, "coordinates": [100.0, 200.5]}
+RING = [[0, 0], [1, 0], [1, 1], [0, 0]]
+POLY = {"type": "Polygon", "srid": 2154, "coordinates": [RING]}
+MPOLY = {"type": "MultiPolygon", "srid": 2154, "coordinates": [[RING]]}
 
 
 class FakeClient:
@@ -171,11 +174,21 @@ class SyncTests(unittest.TestCase):
 
     def current(self, **changes):
         cells = {**self.base["9"]["cells"], **changes}
-        return {"9": {"cells": cells, "wkt": self.base["9"]["geom_wkt"], "geojson": PT}}
+        return {"9": {"cells": cells, "wkt": self.base["9"]["geom_wkt"], "geojson": POLY}}
 
     def test_no_change_no_row(self):
         self.assertEqual(syncplan.collect_changes("ue", "recording_unit", self.ru.specs, self.base, self.current(),
                                                   self.vocabs, True), [])
+
+    def test_non_surface_geometry_is_refused_for_ue_and_project(self):
+        line = {"type": "LineString", "srid": 2154, "coordinates": [[0, 0], [1, 1]]}
+        cur = self.current()
+        cur["9"]["wkt"], cur["9"]["geojson"] = "LINESTRING (0 0, 1 1)", line
+        ch = syncplan.collect_changes("ue", "recording_unit", self.ru.specs, self.base, cur, self.vocabs, True)[0]
+        self.assertTrue(ch.blocking)
+        self.assertFalse(ch.geom_changed)
+        self.assertEqual(syncplan.surface_only("project", MPOLY), (MPOLY, None))
+        self.assertEqual(syncplan.surface_only("find", PT), (PT, None))  # le mobilier n'est pas concerné
 
     def test_changes_and_push(self):
         cur = self.current(Nom="Autre", Statut="En cours")
@@ -185,6 +198,7 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(ch.answers, {"1": {"value": "Autre"}})
         self.assertEqual(ch.validated, "INCOMPLETE")
         self.assertTrue(ch.geom_changed)
+        self.assertEqual(ch.geom, MPOLY)  # Polygon enveloppé : le serveur exige un MultiPolygon
         res = syncplan.push(self.client, ch)
         self.assertEqual(res.status, "ok")
         self.assertEqual(res.new_revision, 4)
@@ -240,7 +254,7 @@ class CreationTests(unittest.TestCase):
 
     def test_create_ru(self):
         new = [{"fid": -1, "cells": self.blank(self.ru.specs, Nom="Nouveau", Type="Fossé", Poids="2"),
-                "wkt": "POINT (1 1)", "geojson": PT}]
+                "wkt": "POLYGON ((0 0, 1 0, 1 1, 0 0))", "geojson": POLY}]
         [cr] = syncplan.collect_creations("ue", "recording_unit", self.ru.specs, new, self.vocabs,
                                           self.ru.type_allowed, self.ru.default_allowed, True)
         self.assertTrue(not cr.blocking, cr.issues)
@@ -249,7 +263,7 @@ class CreationTests(unittest.TestCase):
         res = syncplan.push_create(self.client, cr, "7")
         self.assertEqual(res.status, "ok")
         kind, pid, kw = self.client.patches[-1]
-        self.assertEqual((kind, pid, kw["type_id"], kw["geom"]), ("create_ru", "7", "11", PT))
+        self.assertEqual((kind, pid, kw["type_id"], kw["geom"]), ("create_ru", "7", "11", MPOLY))  # SIAMOIS veut un MultiPolygon
         row = syncplan.entity_to_row("recording_unit", res.entity, self.ru.specs, self.vocabs)
         self.assertEqual(row["id"], "100")
         self.assertEqual(row["cells"]["Identifiant complet"], "UE-100")

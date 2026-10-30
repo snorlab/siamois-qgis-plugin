@@ -73,6 +73,15 @@ Détecter qu'un mobilier a été modifié sur le serveur depuis le chargement da
 
 ---
 
+## 4. Géométrie des UE et des projets : MultiPolygon seulement (constaté)
+
+`ActionUnit.geom` et `RecordingUnit.geom` sont des `MultiPolygon` ; `PATCH /projects/{id}` répond 400 « Une géométrie de type
+MultiPolygon est attendue, reçu : Polygon » pour un simple polygone. Conséquences :
+- le plugin enveloppe désormais un Polygon en MultiPolygon avant l'envoi ;
+- une UE **ligne** ou **point** (tables `ut_ligne`, `ut_point`, `ud_ligne`) ne peut pas être synchronisée : le plugin la signale
+  comme erreur bloquante. Pour le modèle spatial complet, il faudrait que `RecordingUnit.geom` accepte tout type de géométrie
+  (comme `Specimen.geom`, déjà `Geometry`).
+
 ## Hors périmètre de cette demande (déjà couvert ou différé)
 
 | Sujet | État |
