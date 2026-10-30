@@ -5,9 +5,10 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from qgis.core import Qgis, QgsApplication, QgsProject, QgsSettings, QgsTask, QgsWkbTypes
+from qgis.core import Qgis, QgsApplication, QgsGeometry, QgsProject, QgsSettings, QgsTask, QgsWkbTypes
 from qgis.gui import QgsMapToolCapture, QgsMapToolDigitizeFeature
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt import sip
+from qgis.PyQt.QtCore import Qt, QTimer
 from qgis.PyQt.QtWidgets import QAction, QApplication, QFileDialog, QMessageBox, QPushButton
 
 from ._sdk import siamois_sdk  # noqa: F401
@@ -335,17 +336,29 @@ class SiamoisPlugin:
         self._msg("Dessinez sur la carte : clic gauche pour poser un sommet, clic droit pour terminer.", Qgis.Info, 10)
 
     def _geometry_drawn(self, layer, fid: int, feature) -> None:
-        geom = feature.geometry()
-        if geom is not None and not geom.isNull():
-            if QgsWkbTypes.isMultiType(layer.wkbType()) and not geom.isMultipart():
-                geom.convertToMultiType()
-            layer.changeGeometry(fid, geom)
-        canvas = self.iface.mapCanvas()
-        canvas.unsetMapTool(self._draw_tool)
-        if getattr(self, "_previous_tool", None) is not None:
-            canvas.setMapTool(self._previous_tool)
+        """Appelé par le signal de l'outil : on ne touche pas à l'outil ici (il n'a pas fini son signal), tout est
+        différé à la boucle d'événements suivante, sans quoi QGIS plante."""
+        geom = QgsGeometry(feature.geometry()) if feature.hasGeometry() else None
+        tool, previous = self._draw_tool, getattr(self, "_previous_tool", None)
         self._draw_tool = None
-        self._msg("Géométrie ajoutée. Enregistrez la couche (crayon), puis synchronisez.", Qgis.Success, 8)
+        QTimer.singleShot(0, lambda: self._finish_drawing(layer, fid, geom, tool, previous))
+
+    def _finish_drawing(self, layer, fid: int, geom, tool, previous) -> None:
+        try:
+            if geom is not None and not geom.isNull():
+                if QgsWkbTypes.isMultiType(layer.wkbType()) and not geom.isMultipart():
+                    geom.convertToMultiType()
+                layer.changeGeometry(fid, geom)
+                self._msg("Géométrie ajoutée. Enregistrez la couche (crayon), puis synchronisez.", Qgis.Success, 8)
+            else:
+                self._msg("Aucune géométrie dessinée.", Qgis.Warning)
+        finally:
+            canvas = self.iface.mapCanvas()
+            if tool is not None and not sip.isdeleted(tool):
+                canvas.unsetMapTool(tool)
+                tool.deleteLater()
+            if previous is not None and not sip.isdeleted(previous):
+                canvas.setMapTool(previous)
 
     # ------------------------------------------------------------------ vérification / synchronisation
 
