@@ -15,6 +15,8 @@ from siamois_qgis.core.store import Store  # noqa: E402
 
 LAYOUT = [{"name": "Général", "rows": [{"columns": [
     {"fieldId": 1, "isRequired": True}, {"fieldId": 2}, {"fieldId": 3}, {"fieldId": 4}]}]}]
+LAYOUT_NO_TYPE = [{"name": "Général", "rows": [{"columns": [
+    {"fieldId": 1, "isRequired": True}, {"fieldId": 3}, {"fieldId": 4}]}]}]
 FIELDS = {
     "1": {"id": "1", "label": "Nom", "answerType": "TEXT"},
     "2": {"id": "2", "label": "Type", "answerType": "SELECT_ONE_FROM_FIELD_CODE", "fieldCode": "SIARU.TYPE",
@@ -22,6 +24,8 @@ FIELDS = {
     "4": {"id": "4", "label": "UE", "answerType": "SELECT_ONE_RECORDING_UNIT", "valueBinding": "recordingUnit"},
     "3": {"id": "3", "label": "Poids", "answerType": "MEASUREMENT"},
 }
+# Sur le vrai serveur le type n'est pas un champ du formulaire (en-tête de la fiche) : le plugin ajoute la colonne « Type »
+FIELDS_NO_TYPE = {k: v for k, v in FIELDS.items() if k != "2"}
 PT = {"type": "Point", "srid": 2154, "coordinates": [100.0, 200.5]}
 
 
@@ -39,11 +43,13 @@ class FakeClient:
     def project_form(self, org):
         return parse_form(LAYOUT, FIELDS)
 
-    def recording_unit_forms(self, pid):
-        return parse_form(LAYOUT, FIELDS), {}
+    TYPES = [{"id": "10", "resolvedLabel": "Bâtiment"}, {"id": "11", "resolvedLabel": "Fossé"}]
 
-    def find_forms(self, pid):
-        return parse_form(LAYOUT, FIELDS), {}
+    def recording_unit_types(self, pid):
+        return parse_form(LAYOUT_NO_TYPE, FIELDS_NO_TYPE), {}, list(self.TYPES)
+
+    def find_types(self, pid):
+        return parse_form(LAYOUT_NO_TYPE, FIELDS_NO_TYPE), {}, list(self.TYPES)
 
     def vocabulary(self, pid, code):
         return Vocabulary([{"id": "10", "resolvedLabel": "Bâtiment"}, {"id": "11", "resolvedLabel": "Fossé"}])
@@ -58,7 +64,7 @@ class FakeClient:
 
     def recording_units(self, pid, offset=0, limit=100):
         ru = RecordingUnit(id="9", full_identifier="UE-9", validated="COMPLETE", sync_revision=3, geom=PT,
-                           answers={"1": "UE neuf", "2": {"resourceId": "10", "label": "x"}})
+                           type_id="10", type_label="Bâtiment", answers={"1": "UE neuf"})
         return Page([ru], 1, limit, offset)
 
     def finds(self, pid, offset=0, limit=100):
@@ -77,7 +83,8 @@ class FakeClient:
         if self.fail_create:
             raise ValidationError("Type refusé", 400, {})
         return RecordingUnit(id="100", full_identifier="UE-100", validated="INCOMPLETE", sync_revision=1,
-                             geom=kw.get("geom"), answers={"1": "Nouveau", "2": {"resourceId": type_id}})
+                             geom=kw.get("geom"), type_id=type_id, type_label="Fossé" if type_id == "11" else "Bâtiment",
+                             answers={"1": "Nouveau"})
 
     def create_find(self, ru_id, type_id, **kw):
         self.patches.append(("create_find", ru_id, {"type_id": type_id, **kw}))

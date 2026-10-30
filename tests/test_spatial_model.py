@@ -97,6 +97,26 @@ class BundleTests(unittest.TestCase):
         self.assertEqual(len(b.layer("ut_point").rows), 1)  # la géométrie (point) l'emporte
         self.assertEqual(len(b.layer("ur_poly").rows), 0)
 
+    def test_type_column_exists_without_a_form_field(self):
+        """Le type vient de l'en-tête de la fiche : la colonne « Type » est ajoutée et sert à la création."""
+        from siamois_sdk.flatten import Vocabulary
+        from siamois_qgis.core import syncplan
+        b = loader.load_project(FakeClient(), 1, 7)
+        ld = b.layer("uo_poly")
+        names = [sp.name for sp in ld.specs]
+        self.assertEqual(names.count("Type"), 1)
+        self.assertEqual(b.layer("ut_point").rows[0].cells["Type"], "Bâtiment")
+        self.assertIn(loader.VOCAB_TYPE[loader.KIND_RU], b.vocab_concepts)
+        vocabs = {c: Vocabulary(v) for c, v in b.vocab_concepts.items()}
+        vocabs[loader.VOCAB_STATUS] = loader.status_vocabulary()
+        cells = {sp.name: None for sp in ld.specs}
+        cells.update({"Type": "Fossé", "Nom": "Nouvelle"})
+        (cr,) = syncplan.collect_creations("uo_poly", loader.KIND_RU, ld.specs,
+                                           [{"fid": 1, "cells": cells, "wkt": None, "geojson": None}], vocabs,
+                                           ld.type_allowed, ld.default_allowed, True)
+        self.assertEqual(cr.type_id, "11")
+        self.assertFalse([i for i in cr.issues if i.blocking])
+
     def test_concepts_from_bundle(self):
         b = loader.load_project(FakeClient(), 1, 7)
         rows = loader.concept_rows(b)

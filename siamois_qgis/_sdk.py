@@ -7,7 +7,7 @@ Le SDK embarqué est *préféré* à un `siamois_sdk` déjà présent dans l'env
 import os
 import sys
 
-MIN_SDK = (0, 2, 0)  # 0.2.0 : création d'UE/mobilier (cells_to_create, create_*)
+MIN_SDK = (0, 3, 0)  # 0.3.0 : liste des types (recording_unit_types, find_types) ; 0.2.0 : création
 
 
 def _parse(version):

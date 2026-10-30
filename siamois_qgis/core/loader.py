@@ -19,6 +19,8 @@ FULL_IDENTIFIER_COLUMN = "Identifiant complet"
 FID_STATUS = "__validated"
 VOCAB_STATUS = "__validated"
 VOCAB_RU = "__ru"  # vocabulaire synthétique : UE du projet (id -> identifiant complet)
+FID_TYPE = "__type"  # le type n'est pas un champ du formulaire (il vit dans l'en-tête de la fiche) : colonne ajoutée
+VOCAB_TYPE = {"recording_unit": "__type_ru", "find": "__type_find"}  # vocabulaires synthétiques des types
 BINDING_TYPE = "type"
 BINDING_RU = "recordingUnit"
 IMMUTABLE_BINDINGS = (BINDING_TYPE, BINDING_RU)  # non modifiables après création
@@ -92,15 +94,22 @@ def status_vocabulary() -> Vocabulary:
     return Vocabulary({"id": k, "resolvedLabel": v} for k, v in STATUS_LABELS.items() if k in EDITABLE_STATUSES)
 
 
-def fixed_specs() -> List[ColumnSpec]:
-    return [
+def fixed_specs(kind: Optional[str] = None) -> List[ColumnSpec]:
+    specs = [
         ColumnSpec(FULL_IDENTIFIER_COLUMN, FID_FULL, TEXT, "TEXT", editable=False),
         ColumnSpec("Statut", FID_STATUS, CHOICE, "SELECT_ONE_FROM_FIELD_CODE", vocab_code=VOCAB_STATUS),
     ]
+    if kind in VOCAB_TYPE:  # choisi à la création, non modifiable ensuite (IMMUTABLE_BINDINGS)
+        specs.append(ColumnSpec("Type", FID_TYPE, CHOICE, "SELECT_ONE_FROM_FIELD_CODE", vocab_code=VOCAB_TYPE[kind],
+                                required=True, binding=BINDING_TYPE))
+    return specs
 
 
-def with_fixed(answers: Dict[str, Any], full_identifier: Optional[str], validated: Optional[str]) -> Dict[str, Any]:
+def with_fixed(answers: Dict[str, Any], full_identifier: Optional[str], validated: Optional[str],
+               type_id: Optional[str] = None, type_label: Optional[str] = None) -> Dict[str, Any]:
     out = dict(answers or {})
+    if type_id:
+        out[FID_TYPE] = {"resourceId": type_id, "label": type_label}
     out[FID_FULL] = full_identifier
     out[FID_STATUS] = {"resourceId": validated, "label": STATUS_LABELS.get(validated or "", validated)} if validated else None
     return out
@@ -112,7 +121,8 @@ def ru_vocabulary(concepts) -> Vocabulary:
 
 def entity_answers(kind: str, entity: Any, specs: List[ColumnSpec]) -> Dict[str, Any]:
     """Réponses « à plat » d'une entité API (colonnes techniques + champ UE du mobilier incluses)."""
-    answers = with_fixed(entity.answers, entity.full_identifier, entity.validated)
+    answers = with_fixed(entity.answers, entity.full_identifier, entity.validated,
+                         getattr(entity, "type_id", None), getattr(entity, "type_label", None))
     if kind == KIND_FIND and getattr(entity, "recording_unit_id", None):
         for s in specs:
             if s.binding == BINDING_RU:
@@ -139,11 +149,13 @@ def load_project(client: SiamoisClient, org_id: Any, project_id: Any, progress: 
     project_form = client.project_form(org_id)
 
     _step(progress, "Formulaires")
-    ru_default, ru_by_type = client.recording_unit_forms(pid)
-    find_default, find_by_type = client.find_forms(pid)
+    ru_default, ru_by_type, ru_types = client.recording_unit_types(pid)
+    find_default, find_by_type, find_types = client.find_types(pid)
 
-    ru_specs = merge_schemas(fixed_specs(), flatten_schema(ru_default), *(flatten_schema(f) for f in ru_by_type.values()))
-    find_specs = merge_schemas(fixed_specs(), flatten_schema(find_default), *(flatten_schema(f) for f in find_by_type.values()))
+    ru_specs = merge_schemas(fixed_specs(KIND_RU), flatten_schema(ru_default),
+                             *(flatten_schema(f) for f in ru_by_type.values()))
+    find_specs = merge_schemas(fixed_specs(KIND_FIND), flatten_schema(find_default),
+                               *(flatten_schema(f) for f in find_by_type.values()))
     project_specs = merge_schemas(fixed_specs(), flatten_schema(project_form))
 
     for sp in find_specs:  # l'UE d'un mobilier : liste des UE du projet (utile à la création)
@@ -151,10 +163,12 @@ def load_project(client: SiamoisClient, org_id: Any, project_id: Any, progress: 
             sp.kind, sp.vocab_code, sp.editable = CHOICE, VOCAB_RU, True
 
     # Vocabulaires de toutes les colonnes (un appel par code)
+    synthetic = (VOCAB_STATUS, VOCAB_RU, *VOCAB_TYPE.values())
     codes = sorted({s.vocab_code for specs in (ru_specs, find_specs, project_specs) for s in specs
-                    if s.vocab_code and s.vocab_code not in (VOCAB_STATUS, VOCAB_RU)})
-    vocab_concepts: Dict[str, List[Dict[str, Any]]] = {}
-    vocabs: Vocabularies = {VOCAB_STATUS: status_vocabulary(), VOCAB_RU: Vocabulary()}
+                    if s.vocab_code and s.vocab_code not in synthetic})
+    vocab_concepts: Dict[str, List[Dict[str, Any]]] = {VOCAB_TYPE[KIND_RU]: ru_types, VOCAB_TYPE[KIND_FIND]: find_types}
+    vocabs: Vocabularies = {VOCAB_STATUS: status_vocabulary(), VOCAB_RU: Vocabulary(),
+                            VOCAB_TYPE[KIND_RU]: Vocabulary(ru_types), VOCAB_TYPE[KIND_FIND]: Vocabulary(find_types)}
     for i, code in enumerate(codes):
         _step(progress, f"Vocabulaire {code}", i, len(codes))
         v = client.vocabulary(pid, code)
@@ -172,8 +186,8 @@ def load_project(client: SiamoisClient, org_id: Any, project_id: Any, progress: 
 
     # UE
     ru_rows: List[RowData] = []
-    ru_allowed = {t: {*(c for c in f.field_ids()), FID_FULL, FID_STATUS} for t, f in ru_by_type.items()}
-    default_allowed = {*ru_default.field_ids(), FID_FULL, FID_STATUS}
+    ru_allowed = {t: {*(c for c in f.field_ids()), FID_FULL, FID_STATUS, FID_TYPE} for t, f in ru_by_type.items()}
+    default_allowed = {*ru_default.field_ids(), FID_FULL, FID_STATUS, FID_TYPE}
 
     def on_ru(done: int, total: int) -> bool:
         return progress("Unités d'enregistrement", done, total) is not False if progress else True
@@ -194,7 +208,7 @@ def load_project(client: SiamoisClient, org_id: Any, project_id: Any, progress: 
     # Mobilier
     find_rows: List[RowData] = []
     find_allowed = {t: set(f.field_ids()) for t, f in find_by_type.items()}
-    default_find = {*find_default.field_ids(), FID_FULL, FID_STATUS}
+    default_find = {*find_default.field_ids(), FID_FULL, FID_STATUS, FID_TYPE}
 
     def on_find(done: int, total: int) -> bool:
         return progress("Mobilier", done, total) is not False if progress else True
@@ -213,7 +227,7 @@ def load_project(client: SiamoisClient, org_id: Any, project_id: Any, progress: 
                                type_allowed=ru_allowed, default_allowed=default_allowed)
     # L'API ne permet pas de modifier la géométrie d'un mobilier : lecture seule
     find_layers = split_by_table(KIND_FIND, find_specs, find_rows, find_type, spatial, geom_editable=False,
-                                 type_allowed={t: a | {FID_FULL, FID_STATUS} for t, a in find_allowed.items()},
+                                 type_allowed={t: a | {FID_FULL, FID_STATUS, FID_TYPE} for t, a in find_allowed.items()},
                                  default_allowed=default_find)
     layers += ru_layers + find_layers
     return ProjectBundle(str(org_id), pid, project.name, layers, vocab_concepts, client.base_url, spatial, author)
