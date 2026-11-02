@@ -7,7 +7,7 @@ Le SDK embarqué est *préféré* à un `siamois_sdk` déjà présent dans l'env
 import os
 import sys
 
-MIN_SDK = (0, 4, 0)  # 0.4.0 : géométrie du mobilier ; 0.3.0 : liste des types ; 0.2.0 : création
+MIN_SDK = (0, 5, 0)  # 0.5.0 : listes lues par identifiant de champ (plus de field code) ; 0.4.0 : géométrie du mobilier ; 0.3.0 : liste des types ; 0.2.0 : création
 
 
 def _parse(version):

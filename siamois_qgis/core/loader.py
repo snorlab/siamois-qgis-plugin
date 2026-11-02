@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from . import _sdk_import  # noqa: F401
 from siamois_sdk import SiamoisClient
 from siamois_sdk.flatten import (
-    CHOICE, CHOICE_MANY, TEXT, ColumnSpec, Vocabulary, Vocabularies, flatten_schema, incomplete_columns, merge_schemas,
+    CHOICE, CHOICE_MANY, TEXT, ColumnSpec, field_vocab_id, Vocabulary, Vocabularies, flatten_schema, incomplete_columns, merge_schemas,
     row_to_cells,
 )
 from . import log
@@ -189,7 +189,8 @@ def load_project(client: SiamoisClient, org_id: Any, project_id: Any, progress: 
                             VOCAB_TYPE[KIND_RU]: Vocabulary(ru_types), VOCAB_TYPE[KIND_FIND]: Vocabulary(find_types)}
     for i, code in enumerate(codes):
         _step(progress, f"Vocabulaire {code}", i, len(codes))
-        v = client.vocabulary(pid, code)
+        fid = field_vocab_id(code)  # « field:<id> » : liste lue par identifiant de champ (plus de field code)
+        v = client.field_vocabulary(org_id, pid, fid) if fid else client.vocabulary(pid, code)
         vocabs[code] = v
         vocab_concepts[code] = v.concepts
 
