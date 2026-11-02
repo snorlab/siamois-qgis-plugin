@@ -301,7 +301,26 @@ class SiamoisPlugin:
         if not feats:
             self._msg("Sélectionnez un élément de la couche (outil de sélection ou table d'attributs).", Qgis.Warning)
             return
-        self.iface.openFeatureForm(layer, feats[0], True)
+        try:
+            self._show_form(layer, feats[0])
+        except Exception as exc:  # noqa: BLE001 - repli sur le formulaire standard de QGIS
+            log.error("Fiche : ouverture avec défilement impossible, formulaire standard", exc)
+            self.iface.openFeatureForm(layer, feats[0], True)
+
+    def _show_form(self, layer, feature) -> None:
+        """Fiche de l'élément, bornée à la taille de l'écran (les onglets défilent au lieu de déborder)."""
+        from qgis.core import QgsFeature
+        from qgis.gui import QgsAttributeDialog, QgsAttributeEditorContext
+        ctx = QgsAttributeEditorContext()
+        ctx.setMapCanvas(self.iface.mapCanvas())
+        dlg = QgsAttributeDialog(layer, QgsFeature(feature), False, self.iface.mainWindow(), True, ctx)
+        dlg.setAttribute(Qt.WA_DeleteOnClose)
+        screen = dlg.screen().availableGeometry() if hasattr(dlg, "screen") else QApplication.desktop().availableGeometry()
+        hint = dlg.sizeHint()
+        dlg.resize(min(max(hint.width(), 640), int(screen.width() * 0.9)),
+                   min(max(hint.height(), 400), int(screen.height() * 0.85)))
+        dlg.setMaximumHeight(int(screen.height() * 0.95))
+        dlg.show()
 
     # ------------------------------------------------------------------ géométrie d'un élément existant
 
