@@ -242,13 +242,19 @@ def configure_layer(layer: QgsVectorLayer, specs: List[ColumnSpec], vocabs: Voca
         if idx >= 0:
             _setup(layer, idx, "Hidden", {})
             form.setReadOnly(idx, True)
+    dropdowns, skipped = 0, []
     for s in specs:
         idx = fields.indexOf(s.name)
         if idx < 0:
+            if s.kind == CHOICE:
+                skipped.append(f"{s.name}: colonne absente")
             continue
         vocab = vocabs.get(s.vocab_code or "")
+        if s.kind == CHOICE and (vocab is None or not s.editable):
+            skipped.append(f"{s.name}: {'vocabulaire ' + repr(s.vocab_code) + ' absent' if vocab is None else 'lecture seule'}")
         if s.kind == CHOICE and vocab is not None and s.editable:
             _setup(layer, idx, "ValueMap", _value_map(vocab.sorted_labels))
+            dropdowns += 1
         elif s.kind in (INTEGER, DECIMAL, MEASUREMENT) and s.editable:
             big = 1e12
             _setup(layer, idx, "Range", {
@@ -265,6 +271,8 @@ def configure_layer(layer: QgsVectorLayer, specs: List[ColumnSpec], vocabs: Voca
             layer.setFieldConstraint(idx, QgsFieldConstraints.ConstraintNotNull, QgsFieldConstraints.ConstraintStrengthSoft)
     _build_tabs(layer, form, specs)
     layer.setEditFormConfig(form)
+    log.info(f"Formulaire {layer.name()} : {dropdowns} liste(s) déroulante(s)"
+             + (f" ; ignorées : {'; '.join(skipped)}" if skipped else ""))
 
 
 def _build_tabs(layer: QgsVectorLayer, form: QgsEditFormConfig, specs: List[ColumnSpec]) -> None:
