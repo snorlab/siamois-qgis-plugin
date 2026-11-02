@@ -31,6 +31,11 @@ complet et le type. Détails et demandes d'évolution serveur : [`docs/DEMANDE_E
 Le plugin envoie les géométries telles quelles (UE : surface, ligne ou point ; mobilier : point ; projet : surface). Le serveur doit
 embarquer la branche `feat/geometry-generic-geom` (sinon : 400 « MultiPolygon attendu »). SDK requis : ≥ 0.4.0.
 
+## Auteurs
+- **Grégory Bliault** : plugin et SDK.
+- **Quentin Verriez** (UMR 6249 Chrono-environnement, Tempus) : modèle de données spatiales SIAMOIS suivi par le GeoPackage
+  (tables `projet`, `ut_*`, `uo_*`, `ur_poly`, `ud_*`, `metadonnees`, `concept`, `personne`, `raster`, `lien_*`).
+
 ## Tests (sans QGIS)
 `python -m unittest discover -s tests -t .` — couvre chargement, détection des changements, envoi, conflits, fichier annexe.
 Le code PyQGIS (`core/qgis_layers.py`, `ui/`, `plugin.py`) est compilé mais **n'a pas encore été exécuté dans QGIS**.
