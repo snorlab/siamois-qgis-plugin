@@ -271,6 +271,9 @@ def configure_layer(layer: QgsVectorLayer, specs: List[ColumnSpec], vocabs: Voca
             layer.setFieldConstraint(idx, QgsFieldConstraints.ConstraintNotNull, QgsFieldConstraints.ConstraintStrengthSoft)
     _build_tabs(layer, form, specs)
     layer.setEditFormConfig(form)
+    from collections import Counter
+    kinds = Counter(f"{s.kind}/{s.answer_type}" + ("" if s.vocab_code else "/sans code") for s in specs)
+    log.info(f"Formulaire {layer.name()} : {len(specs)} colonne(s) {dict(kinds)}")
     log.info(f"Formulaire {layer.name()} : {dropdowns} liste(s) déroulante(s)"
              + (f" ; ignorées : {'; '.join(skipped)}" if skipped else ""))
 
