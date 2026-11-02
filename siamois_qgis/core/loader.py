@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from . import _sdk_import  # noqa: F401
 from siamois_sdk import SiamoisClient
 from siamois_sdk.flatten import (
-    CHOICE, TEXT, ColumnSpec, Vocabulary, Vocabularies, flatten_schema, incomplete_columns, merge_schemas,
+    CHOICE, CHOICE_MANY, TEXT, ColumnSpec, Vocabulary, Vocabularies, flatten_schema, incomplete_columns, merge_schemas,
     row_to_cells,
 )
+from . import log
 from .geo import dominant_srid, srid_of
 from . import spatial_model as sm
 
@@ -140,6 +142,18 @@ def _vocab_codes(layers: List[LayerData]) -> Set[str]:
     return {s.vocab_code for l in layers for s in l.specs if s.vocab_code and s.vocab_code != VOCAB_STATUS}
 
 
+def _log_unresolved_selects(label: str, form: Any, specs: List[ColumnSpec]) -> None:
+    """Diagnostic : champs de type liste que le plugin ne sait pas présenter en liste déroulante (définition brute)."""
+    for sp in specs:
+        if sp.kind in (CHOICE, CHOICE_MANY) and sp.vocab_code or sp.kind not in (CHOICE_MANY, "reference"):
+            continue
+        fd = form.field(sp.field_id)
+        raw = getattr(fd, "raw", None)
+        if raw:
+            keys = {k: v for k, v in raw.items() if k not in ("label", "hint")}
+            log.info(f"{label} · champ liste non reconnu « {sp.name} » : {json.dumps(keys, ensure_ascii=False)[:600]}")
+
+
 def load_project(client: SiamoisClient, org_id: Any, project_id: Any, progress: Optional[Progress] = None,
                  spatial: Optional[sm.SpatialConfig] = None, author: str = sm.AUTHOR_FALLBACK) -> ProjectBundle:
     """Charge projet + UE + mobilier, rangés dans les tables du modèle spatial. Lève `Cancelled` si `progress(...)` renvoie False."""
@@ -158,6 +172,9 @@ def load_project(client: SiamoisClient, org_id: Any, project_id: Any, progress: 
     find_specs = merge_schemas(fixed_specs(KIND_FIND), flatten_schema(find_default),
                                *(flatten_schema(f) for f in find_by_type.values()))
     project_specs = merge_schemas(fixed_specs(), flatten_schema(project_form))
+
+    _log_unresolved_selects("UE", ru_default, ru_specs)
+    _log_unresolved_selects("Mobilier", find_default, find_specs)
 
     for sp in find_specs:  # l'UE d'un mobilier : liste des UE du projet (utile à la création)
         if sp.binding == BINDING_RU:
