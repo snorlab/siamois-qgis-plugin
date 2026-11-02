@@ -27,6 +27,9 @@ complet et le type. Détails et demandes d'évolution serveur : [`docs/DEMANDE_E
 Écart avec le fichier préformaté de Quentin (contraintes, vues, styles) et piste « fichier modèle » :
 [`docs/ANALYSE_ECART_GEOPACKAGE_QUENTIN.md`](docs/ANALYSE_ECART_GEOPACKAGE_QUENTIN.md).
 
+Pour aller vers des fiches fidèles aux types SIAMOIS (formulaire par type, règles, identifiants, sélections d'entités) :
+[`docs/SUIVRE_LES_CONFIGURATIONS_DE_TYPE.md`](docs/SUIVRE_LES_CONFIGURATIONS_DE_TYPE.md).
+
 ## Prérequis serveur
 Le plugin envoie les géométries telles quelles (UE : surface, ligne ou point ; mobilier : point ; projet : surface). Le serveur doit
 embarquer la branche `feat/geometry-generic-geom` (sinon : 400 « MultiPolygon attendu »). SDK requis : ≥ 0.4.0.
