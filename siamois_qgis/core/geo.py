@@ -17,7 +17,7 @@ def geojson_to_wkt(g: Optional[Dict[str, Any]]) -> Optional[str]:
     if not g or not g.get("type"):
         return None
     t, c = g["type"], g.get("coordinates")
-    if c is None:
+    if not c:  # coordonnées absentes ou vides (« POLYGON EMPTY ») : pas de géométrie
         return None
     z = " Z" if _has_z(c) else ""
     if t == "Point":

@@ -53,7 +53,7 @@ def norm_wkt(wkt: Optional[str]) -> Optional[str]:
     if not wkt:
         return None
     g = QgsGeometry.fromWkt(wkt)
-    return None if g is None or g.isNull() else g.asWkt(WKT_PRECISION)
+    return None if g is None or g.isNull() or g.isEmpty() else g.asWkt(WKT_PRECISION)
 
 
 def _clean(v: Any) -> Any:
@@ -100,7 +100,7 @@ def _qgis_value(sm_type: str, value: Any) -> Any:
 def _geometry(geojson: Optional[Dict[str, Any]]) -> Optional[QgsGeometry]:
     wkt = geojson_to_wkt(geojson)
     g = QgsGeometry.fromWkt(wkt) if wkt else None
-    return g if g is not None and not g.isNull() else None
+    return g if g is not None and not g.isNull() and not g.isEmpty() else None
 
 
 def _table_layer(name: str, family: Optional[str], srid: int, fields: List[QgsField],
@@ -409,7 +409,7 @@ def read_current(layer: QgsVectorLayer, specs: List[ColumnSpec]) -> Tuple[Dict[s
     for f in layer.getFeatures():
         sid = _clean(f[ID_FIELD])
         g = f.geometry() if f.hasGeometry() else None
-        has_geom = g is not None and not g.isNull()
+        has_geom = g is not None and not g.isNull() and not g.isEmpty()  # « POLYGON EMPTY » = pas de géométrie
         row = {
             "cells": {s.name: _clean(f[s.name]) for s in specs},
             "wkt": norm_wkt(g.asWkt()) if has_geom else None,
